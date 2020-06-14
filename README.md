@@ -16,7 +16,7 @@ Usage: `spark-submit esni_classify_fast.py [-h] [ ...arguments... ]`
 
 The arguments for input are:
 * `LOG_TCP_TRAIN_IN`: a path to the input Tstat TCP logs used for training. It is a Spark path, and, as such, it supports wildcards.
-* `LOG_TCP_TRAIN_IN`: a path to the input Tstat TCP logs used for training. It is a Spark path, and, as such, it supports wildcards.
+* `LOG_TCP_TRAIN_IN`: a path to the input Tstat TCP logs used for testing. It is a Spark path, and, as such, it supports wildcards.
 * `ASN_FILE`: The list of ASes to consider, one per line in form of `<name>:<ASN>`.
 
 The arguments for output are:
