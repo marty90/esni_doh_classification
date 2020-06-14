@@ -94,14 +94,16 @@ def main():
              .set("spark.task.maxFailures", 128)
              .set("spark.yarn.max.executor.failures", 128)
              .set("spark.executor.cores", "8")
-             .set("spark.executor.memory", "8G")
+             .set("spark.executor.memory", "12G")
              .set("spark.executor.instances", "80")
              .set("spark.network.timeout", "300")
              .set("spark.executorEnv.PYTHON_EGG_CACHE", "./.python-eggs-cache/")
              .set("spark.executorEnv.PYTHON_EGG_DIR", "./.python-eggs/")
              .set("spark.driverEnv.PYTHON_EGG_CACHE", "./.python-eggs-cache/")
              .set("spark.driverEnv.PYTHON_EGG_DIR", "./.python-eggs/")
-             .set("spark.driver.maxResultSize", "10240M")            
+             .set("spark.driver.maxResultSize", "1024G")   
+             .set("spark.kryoserializer.buffer.max value", "10240G")           
+             .set("spark.kryoserializer.buffer.max.mb",     "2047")
     )
 
     if not DEBUGGER:
@@ -114,7 +116,8 @@ def main():
     asns={}
     print("Target ASNs:")
     for as_name, as_nb in [ l.split(",") for l in open(ASN_FILE, "r").read().splitlines() ]:
-        asns[as_nb] = as_name
+        this_asns = as_nb.split(':')
+        asns[as_name] = this_asns
         print("   {}: {}".format(as_name, as_nb))
         
     # Compute entries and ASs
@@ -133,12 +136,12 @@ def main():
     print_box ("Working on classification")
     models={}
     reports={}
-    for asn in asns:
-        print("Working on : {}".format(asns[asn]))
+    for as_name in asns:
+        print("Working on : {}".format(as_name))
         
         # Filter, persist and print size
-        this_training = training.filter(lambda e: e["s_asn"]==asn)
-        this_testing  = testing.filter(lambda e: e["s_asn"]==asn)
+        this_training = training.filter(lambda e: e["s_asn_name"]==as_name)
+        this_testing  = testing.filter(lambda e: e["s_asn_name"]==as_name)
         this_training.cache()
         this_testing.cache()
                                
@@ -189,8 +192,8 @@ def main():
                     if DATASET_DIR is not None:
                         if not os.path.exists(DATASET_DIR):
                             os.makedirs(DATASET_DIR)
-                        training_local.to_csv("{}/{}.training.csv".format(DATASET_DIR, asns[asn]) , index=False)
-                        testing_local.to_csv("{}/{}.testing.csv".format(DATASET_DIR, asns[asn]) , index=False)
+                        training_local.to_csv("{}/{}.training.csv".format(DATASET_DIR, as_name) , index=False)
+                        testing_local.to_csv("{}/{}.testing.csv".format(DATASET_DIR, as_name) , index=False)
 
                     print ("    Classifying")
                     model, training_report, testing_report = classify_local (training_local, testing_local)
@@ -199,17 +202,18 @@ def main():
                 report = {"training": training_report, "testing": testing_report}
                 print ("        Macro avg F1:", testing_report["macro avg"]["f1-score"])
                 print ("        Weighted avg F1:", testing_report["weighted avg"]["f1-score"])
-                reports[asns[asn]] = report
-                models[asns[asn]] = model
+                reports[as_name] = report
+                if MODEL_OUT is not None:
+                    models[as_name] = model
             else:
                 print("    Skipping as no domain has minimum occurrences")
-                reports[asns[asn]] = {"error" : "no domain has minimum occurrences"}
-                models[asns[asn]] = reports[asns[asn]]
+                reports[as_name] = {"error" : "no domain has minimum occurrences"}
+                models[as_name] = {"error" : "no domain has minimum occurrences"}
         else:
             print("    Skipping as empty")
-            reports[asns[asn]] = {"error" : "empty dataset"}
+            reports[as_name] = {"error" : "empty dataset"}
             if MODEL_OUT is not None:
-                models[asns[asn]] = reports[asns[asn]]
+                models[as_name] = {"error" : "empty dataset"}
         gc.collect()
 
     # Save results on disk
@@ -223,7 +227,11 @@ def main():
 
 
 def is_insteresting(s_asn, asns):
-    return s_asn in asns
+    
+    for as_name in asns:
+        if s_asn in asns[as_name]:
+            return as_name
+    return None
 
 def get_tcp_entries(lines, hashing, asns):
 
@@ -320,14 +328,14 @@ def get_tcp_entries(lines, hashing, asns):
 
                 if c_isint == "1" and s_isint=="0" and name != "-" and \
                    c_bytes_all > 0 and s_bytes_all > 0 and good_c_ip and good_proto and \
-                   is_insteresting(s_asn, asns):
+                   is_insteresting(s_asn, asns) is not None:
                     yield {
                             "c_ip": c_ip,
                             "time": time,
                             "domain": name,
                             "s_ip": s_ip,
                             "s_asn": s_asn,
-                            "s_asn_name": asns[s_asn],
+                            "s_asn_name": is_insteresting(s_asn, asns),
                             "flow_features": flow_features,
                             }
             except IndexError:
@@ -372,15 +380,18 @@ def classify_local (training_local, testing_local):
     
     # Use model and get performance
     pred_training = model.predict(features_training)
+    print ("        Training set predicted")
 
     # Update global stats - Train Set
     training_report = classification_report(labels_training, pred_training, output_dict=True)
+    print ("        Classification report computed - training")
 
     # Prepare features
     features_test = testing_local.drop(columns=['label']).values
     labels_test = testing_local['label'].values
     if SCALER:
         features_test = scaler.transform(features_test)
+    print ("        Testing set created")
     pred_test = model.predict(features_test)
     print ("        Testing Done")
     
